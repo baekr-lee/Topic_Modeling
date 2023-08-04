@@ -1,0 +1,127 @@
+import pandas as pd
+import numpy as np
+from gensim import corpora # 단어 빈도수 계산 패키지
+import gensim # LDA 모델 활용 목적
+from collections import Counter
+
+Data = pd.read_csv("/content/drive/MyDrive/부산_리뷰데이터.csv")
+
+Data = Data[['ANS_CN','ANS_WRT_DT']].copy()
+Data
+
+pip install konlpy
+
+from konlpy.tag import Okt
+okt = Okt()
+from konlpy.tag import Hannanum
+hannanum = Hannanum()
+
+
+Data.rename(columns = {'ANS_CN':'text','ANS_WRT_DT':'timestamp'},inplace=True)
+
+#데이터 프레임의 'text' 열의 값들을 str 형식으로 바꾸기
+Data.text = Data.text.astype(str)
+
+
+#데이터 프레임의 'text' 열의 값 중 keyword1이나 keyword 2가 포함된 행만 Data에 저장
+clean_Data = Data.loc[Data['text'].str.contains('keyword1|keyword2')]
+
+#데이터 프레임의 'text' 열의 값 중 keyword1이나 keyword 2가 포함된 행은 삭제
+clean_Data = Data[~Data['text'].str.contains('keyword1|keyword2')]
+
+
+#text와 timestamp 열을 기준으로 중복된 데이터를 삭제, inplace : 데이터 프레임을 변경할지 선택(원본을 대체)
+clean_Data.drop_duplicates(subset=['text','timestamp'], inplace=True)
+
+#한글이 아니면 빈 문자열로 바꾸기
+clean_Data['text'] = clean_Data['text'].str.replace('[^ㄱ-ㅎㅏ-ㅣ가-힣]',' ',regex=True)
+
+#빈 문자열 NAN 값으로 바꾸기
+clean_Data = clean_Data.replace({'': np.nan})
+clean_Data = clean_Data.replace(r'^\s*$', None, regex=True)
+
+#NAN 이 있는 행은 삭제
+clean_Data.dropna(how='any', inplace=True)
+
+#인덱스 차곡차곡
+clean_Data = clean_Data.reset_index (drop = True)
+
+#데이터 프레임에 null 값이 있는지 확인
+print(clean_Data.isnull().values.any())
+
+#텍스트 데이터를 리스트로 변환
+Data_list=clean_Data.text.values.tolist()
+data_word=[]
+for i in range(len(Data_list)):
+    try:
+        data_word.append(okt.nouns(Data_list[i]))
+    except Exception as e:
+        continue
+data_word
+
+stop_word_list = pd.read_csv("/content/drive/MyDrive/stop_word.csv")
+one_char_list = pd.read_csv("/content/drive/MyDrive/one_char_list.csv")
+
+stop_word_list
+
+def remove_stopword(tokens):
+    review_removed_stopword = []
+    for token in tokens:
+        # 토큰의 글자 수가 2글자 이상인 경우
+        if 1 < len(token):
+            # 토큰이 불용어가 아닌 경우만 분석용 리뷰 데이터로 포함
+            if token not in list(stop_word_list['stopword']):
+                review_removed_stopword.append(token)
+            else:
+            # 1글자 키워드에 포함되는 경우만 분석용 리뷰 데이터로 포함
+             if token in list(one_char_list['one_char_keyword']):
+                review_removed_stopword.append(token)
+    return review_removed_stopword
+
+
+
+data_new_1 = list(map(lambda tokens : remove_stopword(tokens), data_word))
+
+
+data_new_1
+
+NUM_TOPICS = 8 # 토픽 개수는 하이퍼파라미터
+# passes: 딥러닝에서 Epoch와 같은 개념으로, 전체 corpus로 모델 학습 횟수 결정
+PASSES = 20
+
+def lda_modeling(data_new_1):
+    # 단어 인코딩 및 빈도수 계산
+    dictionary = corpora.Dictionary(data_new_1)
+    corpus = [dictionary.doc2bow(review) for review in data_new_1]
+    # LDA 모델 학습
+    model = gensim.models.ldamodel.LdaModel(corpus,
+                                            num_topics = NUM_TOPICS,
+                                            id2word = dictionary,
+                                            passes = PASSES)
+    return model, corpus, dictionary
+
+def print_topic_prop(topics, RATING):
+    topic_values = []
+    for topic in topics:
+        topic_value = topic[1]
+        topic_values.append(topic_value)
+    topic_prop = pd.DataFrame({"topic_num" : list(range(1, NUM_TOPICS + 1)), "word_prop": topic_values})
+    display(topic_prop)
+
+model, corpus, dictionary = lda_modeling(data_new_1)
+NUM_WORDS = 7
+RATING = 'pos'
+topics = model.print_topics(num_words = NUM_WORDS)
+print_topic_prop(topics, RATING)
+
+
+
+topics
+df1 = pd.DataFrame(topics)
+
+topics
+
+df1.to_csv('모델링결과_20230716.csv',encoding='utf-8-sig',index=False)
+
+df1 = print_topic_prop(topics, RATING)
+df1.to_csv('모델링결과.csv', index=False, encoding='utf-8-sig')
